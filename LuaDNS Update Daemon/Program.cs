@@ -66,7 +66,8 @@ namespace LuaDNSUpdateDaemon
 				Path.Combine(configDirectoryName, "csldu.json");
 				if (!File.Exists(path))
 				{
-					path = Path.Combine(System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location), "csldu.json");
+					//https://stackoverflow.com/questions/58428375/cannot-get-original-executable-path-for-net-core-3-0-single-file-ppublishsin
+					path = Path.Combine(System.AppContext.BaseDirectory, "csldu.json");
 				}
 			}
 
