@@ -9,6 +9,10 @@ namespace LuaDNSUpdateDaemon
 		public string id { get; set; }
 		public string token { get; set; }
 		public string url { get; set; }
+
+		public int zoneid { get; set; }
+
+		public int recordid { get; set; }
 	}
 
 	class minizone
@@ -73,7 +77,16 @@ namespace LuaDNSUpdateDaemon
 			r.id = (String)jCfg["id"];
 			r.token = (String)jCfg["token"];
 			r.url = (String)jCfg["url"];
-
+			try
+			{
+				r.zoneid = (int)jCfg["zoneid"];
+				r.recordid = (int)jCfg["recordid"];
+			}
+			catch (Exception)
+			{
+				r.zoneid = -1;
+				r.recordid = -1;
+			}
 			return r;
 		}
 
@@ -114,31 +127,85 @@ namespace LuaDNSUpdateDaemon
 				return e.ToString();
 			}
 		}
+
+
+
 		public static void Main(String[] args)
 		{
 			var cfg = parseconfig(args.Length == 0 ? null : args[0]);
+			//TODO error handling
 			string domname = cfg.url;
 			int zoneid = 0;
 			dnsrecord record = null;
 			var cred = new System.Net.NetworkCredential(cfg.id, cfg.token);
-			foreach (var x in Newtonsoft.Json.JsonConvert.DeserializeObject<List<minizone>>(httpgetwrap("https://api.luadns.com/v1/zones", cred)))
+			string ip = httpgetwrap("http://ifconfig.me", null, null).ToString();
+
+			//search for zone id, but use given one if known.
+			if (cfg.zoneid == -1 || cfg.recordid == -1)
 			{
-				if (x.name == domname)
+				foreach (var x in Newtonsoft.Json.JsonConvert.DeserializeObject<List<minizone>>(httpgetwrap("https://api.luadns.com/v1/zones", cred)))
 				{
-					zoneid = x.id;
-					break;
+					if (x.name == domname)
+					{
+						zoneid = x.id;
+						break;
+					}
+				}
+				foreach (var x in Newtonsoft.Json.JsonConvert.DeserializeObject<List<dnsrecord>>(httpgetwrap("https://api.luadns.com/v1/zones/" + zoneid.ToString() + "/records", cred)))
+				{
+					if ((x.name == (domname + ".")) && (x.type == "A"))
+					{
+						record = x;
+						break;
+					}
 				}
 			}
-			foreach (var x in Newtonsoft.Json.JsonConvert.DeserializeObject<List<dnsrecord>>(httpgetwrap("https://api.luadns.com/v1/zones/" + zoneid.ToString() + "/records", cred)))
+			//Question - do Record ID change? Even after continuous updates?
+			else
 			{
-				if ((x.name == (domname + ".")) && (x.type == "A"))
-				{
-					record = x;
-					break;
-				}
+				zoneid = cfg.zoneid;
+				//get current ip anyway.
+				record = Newtonsoft.Json.JsonConvert.DeserializeObject<dnsrecord>(httpgetwrap("https://api.luadns.com/v1/zones/" + zoneid.ToString() + "/records/" + cfg.recordid.ToString(), cred));
 			}
-			record.content = httpgetwrap("http://ifconfig.me", null, null).ToString();
-			httpputwrap("https://api.luadns.com/v1/zones/" + zoneid.ToString() + "/records/" + record.id.ToString(), Newtonsoft.Json.JsonConvert.SerializeObject(record), cred);
+
+			
+			//DHCP IP did not change
+			if (record.content == ip) return;
+
+			record.content = ip;
+			try
+			{
+				httpputwrap("https://api.luadns.com/v1/zones/" + zoneid.ToString() + "/records/" + record.id.ToString(), Newtonsoft.Json.JsonConvert.SerializeObject(record), cred);
+			}
+			catch (Exception)
+			{
+				//TODO... if records do change and update fails somehow, it should re-run record search again and update somhow.
+				//experiment - if id is wrong, raises 404 error, with exception. 
+
+				//just run search again. again IDK whether zone and record id changes, so... paste it!
+				if (cfg.zoneid == -1 || cfg.recordid == -1)
+				{
+					foreach (var x in Newtonsoft.Json.JsonConvert.DeserializeObject<List<minizone>>(httpgetwrap("https://api.luadns.com/v1/zones", cred)))
+					{
+						if (x.name == domname)
+						{
+							zoneid = x.id;
+							break;
+						}
+					}
+					foreach (var x in Newtonsoft.Json.JsonConvert.DeserializeObject<List<dnsrecord>>(httpgetwrap("https://api.luadns.com/v1/zones/" + zoneid.ToString() + "/records", cred)))
+					{
+						if ((x.name == (domname + ".")) && (x.type == "A"))
+						{
+							record = x;
+							break;
+						}
+					}
+					httpputwrap("https://api.luadns.com/v1/zones/" + zoneid.ToString() + "/records/" + record.id.ToString(), Newtonsoft.Json.JsonConvert.SerializeObject(record), cred);
+				}
+				//if it wasn't id problem... then just exit!
+			}
+
 			return;
 		}
 	}
